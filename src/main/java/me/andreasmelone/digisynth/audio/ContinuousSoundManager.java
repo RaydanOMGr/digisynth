@@ -1,8 +1,5 @@
 package me.andreasmelone.digisynth.audio;
 
-import it.unimi.dsi.fastutil.Pair;
-import it.unimi.dsi.fastutil.objects.Object2IntMap;
-import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import org.lwjgl.openal.AL11;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +9,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class ContinuousSoundManager {
@@ -22,52 +20,53 @@ public class ContinuousSoundManager {
     private final BlockingQueue<Integer> sources;
     private final int maxSourceCount;
 
-    private final Set<FrequencyBufferQueue> playingFrequencies = new HashSet<>();
-    private final BlockingQueue<FrequencyBufferQueue> removeQueue = new LinkedBlockingQueue<>();
+    private final Set<PlayingVoiceBuffer> playingFrequencies = ConcurrentHashMap.newKeySet();
+    private final BlockingQueue<PlayingVoiceBuffer> removeQueue = new LinkedBlockingQueue<>();
 
     protected ContinuousSoundManager(BlockingQueue<Integer> sources, int maxSourceCount) {
         this.sources = sources;
         this.maxSourceCount = maxSourceCount;
     }
 
-    public synchronized FrequencyBufferQueue addPlayingFrequency(int frequency) {
+    public PlayingVoiceBuffer addPlayingFrequency(VoiceBuffer frequency) {
         if (!canAddNewFrequency()) {
             throw new IllegalStateException("Cannot add more than " + maxSourceCount + " frequencies at the same time!");
         }
         try {
             int source = this.sources.take();
-            FrequencyBufferQueue freq = FrequencyBufferQueue.create(source, frequency);
-            this.playingFrequencies.add(freq);
-            return freq;
+            PlayingVoiceBuffer voice = new PlayingVoiceBuffer(source, frequency);
+
+            this.playingFrequencies.add(voice);
+            return voice;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException(e);
         }
     }
 
-    public synchronized void removePlayingFrequency(FrequencyBufferQueue frequency) {
+    public void removePlayingFrequency(PlayingVoiceBuffer frequency) {
         this.playingFrequencies.remove(frequency);
         this.removeQueue.add(frequency);
     }
 
-    public synchronized boolean canAddNewFrequency() {
+    public boolean canAddNewFrequency() {
         return !this.sources.isEmpty();
     }
 
-    public synchronized void loop() {
+    public void loop() {
         this.playingFrequencies.forEach((freq) -> {
             try {
-                int source = freq.getSource();
+                int source = freq.source();
 
                 int processed = AL11.alGetSourcei(source, AL11.AL_BUFFERS_PROCESSED);
                 for (int i = 0; i < processed; i++) {
-                    freq.returnBuffer(AL11.alSourceUnqueueBuffers(source));
+                    freq.voiceBuffer().returnBuffer(AL11.alSourceUnqueueBuffers(source));
                 }
 
                 if(this.removeQueue.contains(freq)) return;
 
-                while(freq.hasBuffer()) {
-                    AL11.alSourceQueueBuffers(source, freq.takeBuffer());
+                while(freq.voiceBuffer().hasBuffer()) {
+                    AL11.alSourceQueueBuffers(source, freq.voiceBuffer().takeBuffer());
                 }
 
                 if(AL11.alGetSourcei(source, AL11.AL_SOURCE_STATE) != AL11.AL_PLAYING) {
@@ -78,17 +77,21 @@ public class ContinuousSoundManager {
             }
         });
 
-        FrequencyBufferQueue freq;
+        PlayingVoiceBuffer freq;
         while ((freq = this.removeQueue.poll()) != null) {
-            int source = freq.getSource();
+            int source = freq.source();
 
             AL11.alSourceStop(source);
 
             int queued = AL11.alGetSourcei(source, AL11.AL_BUFFERS_QUEUED);
             while (queued-- > 0) {
-                AL11.alDeleteBuffers(AL11.alSourceUnqueueBuffers(source));
+                try {
+                    freq.voiceBuffer().returnBuffer(AL11.alSourceUnqueueBuffers(source));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
             }
-            freq.close();
 
             if(!this.sources.offer(source)) {
                 LOGGER.warn("Cannot reinsert source? {}", source);
