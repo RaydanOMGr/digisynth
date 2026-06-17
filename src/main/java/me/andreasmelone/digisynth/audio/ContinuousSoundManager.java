@@ -36,6 +36,11 @@ public class ContinuousSoundManager {
             int source = this.sources.take();
             PlayingVoiceBuffer voice = new PlayingVoiceBuffer(source, frequency);
 
+            while(frequency.hasBuffer()) {
+                AL11.alSourceQueueBuffers(source, frequency.takeBuffer());
+            }
+            AL11.alSourcePlay(source);
+
             this.playingFrequencies.add(voice);
             return voice;
         } catch (InterruptedException e) {

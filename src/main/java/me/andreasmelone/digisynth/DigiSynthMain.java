@@ -22,6 +22,7 @@ public class DigiSynthMain implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DigiSynthMain.class);
 
     private Window window;
+    private volatile boolean renderDirty = true;
 
     private ContinuousSoundManager soundManager;
     private Int2ObjectMap<PlayingVoiceBuffer> frequencyQueue = new Int2ObjectOpenHashMap<>();
@@ -37,9 +38,10 @@ public class DigiSynthMain implements Runnable {
             GLFW.GLFW_KEY_KP_1, DEFAULT_VOICE,
             GLFW.GLFW_KEY_KP_2, new Voice.SynthVoice(),
             GLFW.GLFW_KEY_KP_3, new Voice.BellVoice(),
-            GLFW.GLFW_KEY_KP_4, new Voice.PadVoice(),
-            GLFW.GLFW_KEY_KP_5, new Voice.PlucklessVoice(),
-            GLFW.GLFW_KEY_KP_6, new Voice.BitVoice()
+            GLFW.GLFW_KEY_KP_4, new Voice.SawVoice(),
+            GLFW.GLFW_KEY_KP_5, new Voice.PadVoice(),
+            GLFW.GLFW_KEY_KP_6, new Voice.PlucklessVoice(),
+            GLFW.GLFW_KEY_KP_7, new Voice.BitVoice()
     ));
 
 
@@ -58,7 +60,7 @@ public class DigiSynthMain implements Runnable {
         LOGGER.info("GL Version: {}", GL11.glGetString(GL11.GL_VERSION));
         LOGGER.info("Renderer: {}", GL11.glGetString(GL11.GL_RENDERER));
 
-        Thread audioThread = Thread.startVirtualThread(() -> {
+        Thread audioThread = new Thread(() -> {
             long device = ALC10.alcOpenDevice((CharSequence)null);
             long ctx = ALC10.alcCreateContext(device, (int[])null);
             ALC10.alcMakeContextCurrent(ctx);
@@ -75,6 +77,7 @@ public class DigiSynthMain implements Runnable {
 
             this.soundManager = ContinuousSoundManager.create(ContinuousSoundManager.DEFAULT_SOURCE_COUNT);
             this.audioInit = true;
+            this.renderDirty = true;
             while(!Thread.currentThread().isInterrupted()) {
                 float volumeNow = volume;
                 this.soundManager.loop();
@@ -83,20 +86,24 @@ public class DigiSynthMain implements Runnable {
                 }
             }
         });
+        audioThread.start();
 
         GLFW.glfwSetKeyCallback(this.window.getWindowHandle(), (@NativeType("GLFWwindow *") long window, int key, int scancode, int action, int mods) -> {
             if(this.soundManager == null || !audioInit) return;
 
             if(key == GLFW.GLFW_KEY_KP_SUBTRACT && action == GLFW.GLFW_PRESS) {
                 volume -= 0.1f;
+                this.renderDirty = true;
             }
 
             if(key == GLFW.GLFW_KEY_KP_ADD && action == GLFW.GLFW_PRESS) {
                 volume += 0.1f;
+                this.renderDirty = true;
             }
 
             if(keyToVoiceMapping.containsKey(key) && action == GLFW.GLFW_PRESS) {
                 this.audioInit = false;
+                this.renderDirty = true;
                 this.selectedVoice = keyToVoiceMapping.get(key);
 
                 Thread.startVirtualThread(() -> {
@@ -108,6 +115,7 @@ public class DigiSynthMain implements Runnable {
                     voiceBuffers.putAll(newVoiceBuffers);
 
                     this.audioInit = true;
+                    this.renderDirty = true;
                 });
 
                 return;
@@ -126,10 +134,12 @@ public class DigiSynthMain implements Runnable {
         });
 
         while (!window.shouldClose()) {
-            loop();
-
-            GLFW.glfwSwapBuffers(window.getWindowHandle());
             GLFW.glfwPollEvents();
+
+            if(renderDirty) {
+                loop();
+                GLFW.glfwSwapBuffers(window.getWindowHandle());
+            }
         }
 
         audioThread.interrupt();
