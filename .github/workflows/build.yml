@@ -23,6 +23,9 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Chmod ./gradlew
+        run: chmod +x ./gradlew
+
       - name: Build Windows jar
         run: ./gradlew shadowJar -PlwjglNatives=natives-windows
 
