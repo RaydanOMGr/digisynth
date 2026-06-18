@@ -78,22 +78,20 @@ public class VoiceBuffer implements AutoCloseable {
     }
 
     private static ShortBuffer getWave(int frequency) {
-        return CACHE.computeIfAbsent(frequency, f -> {
-            int samplesPerCycle = Math.round((float) SAMPLE_RATE / f);
-            int capacity = samplesPerCycle * CYCLE_COUNT;
+        int samplesPerCycle = Math.round((float) SAMPLE_RATE / frequency);
+        int capacity = samplesPerCycle * CYCLE_COUNT;
 
-            ShortBuffer buffer = BufferUtils.createShortBuffer(capacity);
+        ShortBuffer buffer = BufferUtils.createShortBuffer(capacity);
 
-            for (int i = 0; i < capacity; i++) {
-                double sine = Math.signum(Math.sin(
-                        2.0 * Math.PI * f * i / SAMPLE_RATE
-                )) * 0.4;
+        for (int i = 0; i < capacity; i++) {
+            double sine = Math.signum(Math.sin(
+                    2.0 * Math.PI * frequency * i / SAMPLE_RATE
+            )) * 0.4;
 
-                buffer.put((short)(sine * Short.MAX_VALUE));
-            }
+            buffer.put((short)(sine * Short.MAX_VALUE));
+        }
 
-            buffer.flip();
-            return buffer;
-        });
+        buffer.flip();
+        return buffer;
     }
 }

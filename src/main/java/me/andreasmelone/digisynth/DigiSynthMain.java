@@ -15,8 +15,10 @@ import org.lwjgl.system.NativeType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class DigiSynthMain implements Runnable {
     private static final Logger LOGGER = LoggerFactory.getLogger(DigiSynthMain.class);
@@ -60,7 +62,7 @@ public class DigiSynthMain implements Runnable {
         LOGGER.info("GL Version: {}", GL11.glGetString(GL11.GL_VERSION));
         LOGGER.info("Renderer: {}", GL11.glGetString(GL11.GL_RENDERER));
 
-        Thread audioThread = new Thread(() -> {
+        Thread audioThread = Thread.startVirtualThread(() -> {
             long device = ALC10.alcOpenDevice((CharSequence)null);
             long ctx = ALC10.alcCreateContext(device, (int[])null);
             ALC10.alcMakeContextCurrent(ctx);
@@ -71,9 +73,7 @@ public class DigiSynthMain implements Runnable {
 
             AL11.alListenerf(AL10.AL_GAIN, volume * 2f);
 
-            for (SoundNote note : SoundNote.values()) {
-                voiceBuffers.put(note, VoiceBuffer.create(this.selectedVoice, note.frequency));
-            }
+            initializeVoiceBuffers();
 
             this.soundManager = ContinuousSoundManager.create(ContinuousSoundManager.DEFAULT_SOURCE_COUNT);
             this.audioInit = true;
@@ -86,7 +86,6 @@ public class DigiSynthMain implements Runnable {
                 }
             }
         });
-        audioThread.start();
 
         GLFW.glfwSetKeyCallback(this.window.getWindowHandle(), (@NativeType("GLFWwindow *") long window, int key, int scancode, int action, int mods) -> {
             if(this.soundManager == null || !audioInit) return;
@@ -107,12 +106,7 @@ public class DigiSynthMain implements Runnable {
                 this.selectedVoice = keyToVoiceMapping.get(key);
 
                 Thread.startVirtualThread(() -> {
-                    Map<SoundNote, VoiceBuffer> newVoiceBuffers = new HashMap<>();
-                    for (SoundNote note : SoundNote.values()) {
-                        newVoiceBuffers.put(note, VoiceBuffer.create(this.selectedVoice, note.frequency));
-                    }
-                    voiceBuffers.clear();
-                    voiceBuffers.putAll(newVoiceBuffers);
+                    initializeVoiceBuffers();
 
                     this.audioInit = true;
                     this.renderDirty = true;
@@ -145,6 +139,15 @@ public class DigiSynthMain implements Runnable {
         audioThread.interrupt();
         window.close();
         GLFW.glfwTerminate();
+    }
+
+    private void initializeVoiceBuffers() {
+        voiceBuffers.clear();
+        Map<SoundNote, VoiceBuffer> buffers = new ConcurrentHashMap<>();
+        Arrays.stream(SoundNote.values()).parallel().forEach((note) -> {
+            buffers.put(note, VoiceBuffer.create(this.selectedVoice, note.frequency));
+        });
+        voiceBuffers.putAll(buffers);
     }
 
     private void loop() {
